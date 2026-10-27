@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RAG Simulator</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{color-scheme:light}
+[hidden]{display:none!important}
+img{max-width:100%}
+/* Layout: left pipeline rail (8 stages) + one working stage card; vectors drawn as heat strips */
+:root{
+  --bg:#EDEFF2; --surface:#FFFFFF; --surface2:#F5F6F8; --ink:#131920; --ink2:#55606C; --line:#D8DCE2;
+  --accent:#D44A08; --accent-soft:#FCE6DA; --on-accent:#FFFFFF;
+  --info:#2F6FD6; --good:#17855F;
+  --c1:#2F6FD6; --c2:#14917F; --c3:#7A56C9; --c4:#C7406B; --c5:#7B8B1F; --c6:#1F8FB3; --on-c:#FFFFFF;
+  --shadow:0 1px 2px rgba(19,25,32,.06),0 8px 24px rgba(19,25,32,.06);
+  --f-display:'Familjen Grotesk',system-ui,sans-serif; --f-body:'IBM Plex Sans',system-ui,sans-serif; --f-mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0F1317; --surface:#171D23; --surface2:#1D252C; --ink:#E8ECEF; --ink2:#9AA7B2; --line:#2B353E;
+  --accent:#FF8340; --accent-soft:#3A2316; --on-accent:#1B0D04; --info:#7FA2FF; --good:#4CC38F;
+  --c1:#6C9CFF; --c2:#3FC8B0; --c3:#A98AF0; --c4:#F0719A; --c5:#B5C84A; --c6:#52BFE3; --on-c:#0F1317;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0F1317; --surface:#171D23; --surface2:#1D252C; --ink:#E8ECEF; --ink2:#9AA7B2; --line:#2B353E;
+  --accent:#FF8340; --accent-soft:#3A2316; --on-accent:#1B0D04; --info:#7FA2FF; --good:#4CC38F;
+  --c1:#6C9CFF; --c2:#3FC8B0; --c3:#A98AF0; --c4:#F0719A; --c5:#B5C84A; --c6:#52BFE3; --on-c:#0F1317;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3); color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:400 15px/1.55 var(--f-body);margin:0;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:22px 56px}
+.app{max-width:1180px;margin:0 auto}
+button{font-family:inherit}
+.eyebrow{font:500 11.5px/1 var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.top{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:flex-end;justify-content:space-between;margin-bottom:24px}
+.top>div{min-width:0}
+h1{font:700 clamp(30px,5vw,44px)/1.05 var(--f-display);letter-spacing:-.02em;margin:10px 0 8px;text-wrap:balance}
+.sub{max-width:62ch;color:var(--ink2);margin:0}
+.top-actions{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.top-actions small{color:var(--ink2);font-size:12px}
+.layout{display:grid;grid-template-columns:250px minmax(0,1fr);gap:24px;align-items:start}
+/* rail */
+.rail{list-style:none;margin:0;padding:0;position:sticky;top:16px;display:flex;flex-direction:column}
+.rail li{position:relative}
+.rail li:not(:last-child)::after{content:"";position:absolute;left:26px;top:42px;bottom:-12px;width:2px;background:var(--line)}
+.rail-item{position:relative;z-index:1;width:100%;display:grid;grid-template-columns:30px 1fr;gap:12px;align-items:center;padding:10px 12px;border-radius:12px;border:1px solid transparent;background:transparent;color:inherit;text-align:left;cursor:pointer;font-size:14px}
+.rail-item:disabled{cursor:not-allowed;opacity:.5}
+.rail-item .dot{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);background:var(--surface);display:grid;place-items:center;font:600 12px var(--f-mono)}
+.rail-item b{font-weight:600;display:block}
+.rail-item small{display:block;min-height:1.2em;color:var(--ink2);font-size:12px}
+.rail-item.active{background:var(--surface);border-color:var(--line);box-shadow:var(--shadow)}
+.rail-item.active .dot{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.rail-item.done .dot{background:var(--good);border-color:var(--good);color:var(--on-c)}
+.rail-item.ready:hover{background:var(--surface)}
+/* stage */
+.stage{background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);min-width:0}
+.stage-head{padding:24px 28px 0}
+.stage-head .eyebrow{color:var(--ink2)}
+.stage-head h2{font:700 28px/1.1 var(--f-display);letter-spacing:-.015em;margin:8px 0}
+.lead{margin:0;max-width:68ch}
+.note{margin:10px 0 0;font-size:13px;color:var(--ink2);max-width:68ch}
+.stage-body{padding:22px 28px 8px;display:flex;flex-direction:column;gap:18px;min-width:0}
+.stage-foot{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 28px;border-top:1px solid var(--line);margin-top:16px}
+.btn{font:600 14px/1 var(--f-body);padding:12px 18px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;transition:border-color .15s,filter .15s}
+.btn:hover:not(:disabled){border-color:var(--ink2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.primary:hover:not(:disabled){filter:brightness(1.07)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.file{display:inline-block}
+.btn:focus-visible,.rail-item:focus-visible,.chip:focus-visible,.seg button:focus-visible,.emb-head:focus-visible,.cite:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.status{font-size:13px;color:var(--ink2)} .status.ok{color:var(--good)} .status.err{color:var(--accent)}
+.model-tag{font:500 12px var(--f-mono);color:var(--ink2);margin-left:auto}
+.doc-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tag{font-size:12.5px;color:var(--ink2)}
+textarea,input[type=text]{width:100%;border:1px solid var(--line);border-radius:12px;background:var(--surface2);color:var(--ink);padding:14px 16px;font:400 14px/1.6 var(--f-body)}
+.doc-input{min-height:300px;resize:vertical}
+.sys-input{resize:vertical;font-family:var(--f-mono);font-size:13px}
+.doc-stats{font:500 12px var(--f-mono);color:var(--ink2)}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;padding:16px;background:var(--surface2);border:1px solid var(--line);border-radius:12px}
+.ctl{display:flex;flex-direction:column;gap:8px;min-width:0}
+.ctl label,.ctl-l{font:500 12px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}
+.ctl output{color:var(--ink);font-weight:600}
+input[type=range]{accent-color:var(--accent);width:100%}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
+.seg button{flex:1;padding:9px 8px;font:500 13px var(--f-body);background:transparent;border:0;border-right:1px solid var(--line);color:var(--ink2);cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--ink);color:var(--surface)}
+.empty{border:1.5px dashed var(--line);border-radius:12px;padding:28px;color:var(--ink2);text-align:center;font-size:14px}
+.empty i{display:block;height:7px;border-radius:4px;background:var(--line);margin:8px auto;max-width:420px}
+/* chunks */
+.map{position:relative;height:58px;border:1px solid var(--line);border-radius:10px;background:var(--surface2)}
+.mseg{position:absolute;height:22px;border-radius:5px;background:color-mix(in srgb,var(--c) 55%,transparent);border:1px solid var(--c);min-width:3px}
+.mcap{font-size:12px;color:var(--ink2);margin-top:-8px}
+.chunks{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.chunk{border:1px solid color-mix(in srgb,var(--c) 40%,var(--line));background:color-mix(in srgb,var(--c) 7%,var(--surface));border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.chunk header{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.chunk .meta{font:500 11px var(--f-mono);color:var(--ink2)}
+.chunk p{margin:0;font-size:13.5px;line-height:1.55;overflow-wrap:anywhere}
+.cid{font:600 11px var(--f-mono);padding:3px 7px;border-radius:6px;background:var(--c);color:var(--on-c);white-space:nowrap}
+mark.ov{background:color-mix(in srgb,var(--accent) 22%,transparent);color:inherit;border-radius:3px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 40%,transparent)}
+mark.cited{background:color-mix(in srgb,var(--good) 24%,transparent);color:inherit;border-radius:3px;padding:0 1px}
+.more{font-size:13px;color:var(--ink2)}
+/* embeddings */
+.legend{display:flex;align-items:center;gap:10px;font:500 11px var(--f-mono);color:var(--ink2)}
+.legend i{flex:0 1 220px;height:8px;border-radius:4px;background:linear-gradient(90deg,var(--info),var(--surface2),var(--accent))}
+.emb-list{display:flex;flex-direction:column;gap:10px}
+.emb-row{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0;background:var(--surface)}
+.emb-head{display:flex;gap:10px;align-items:center;width:100%;background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.emb-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--ink2)}
+.emb-state{font:500 11px var(--f-mono);color:var(--ink2)}
+.emb-row.done .emb-state{color:var(--good)}
+.heat{display:grid;grid-template-columns:repeat(32,1fr);gap:1px}
+.heat i{display:block;height:6px;border-radius:1px;background:var(--surface2)}
+.emb-detail{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12.5px;color:var(--ink2)}
+.tk{font:500 12px var(--f-mono);padding:3px 8px;border-radius:6px;border:1px solid var(--line);background:var(--surface2);color:var(--ink)}
+.tk em{font-style:normal;color:var(--ink2)}
+/* store */
+.kv{display:flex;flex-wrap:wrap;gap:6px 26px;font-size:13px;color:var(--ink2)}
+.kv b{color:var(--ink);font:500 13px var(--f-mono)}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+.vtable{width:100%;min-width:560px;border-collapse:collapse;font-size:13px}
+.vtable th{font:500 11px var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);text-align:left;padding:10px 12px;background:var(--surface2);border-bottom:1px solid var(--line)}
+.vtable td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+.vtable tr:last-child td{border-bottom:0}
+.mono{font-family:var(--f-mono);font-size:12px}
+.space{border:1px solid var(--line);border-radius:12px;background:var(--surface2);padding:14px}
+.space-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;margin-bottom:8px;font-size:13px;color:var(--ink2)}
+.space svg{width:100%;height:auto;display:block}
+.space .grid line{stroke:var(--line)}
+.lbl{font:500 10.5px var(--f-mono);fill:var(--ink2);paint-order:stroke;stroke:var(--surface2);stroke-width:3px}
+.qlbl{font:600 12px var(--f-body);fill:var(--accent);paint-order:stroke;stroke:var(--surface2);stroke-width:3px}
+.ph{padding:40px;text-align:center;color:var(--ink2);font-size:14px}
+/* query */
+.q-row{display:flex;flex-wrap:wrap;gap:10px}
+.q-row input{flex:1 1 280px;width:auto}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font:500 13px var(--f-body);padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+.chip:hover{border-color:var(--accent)}
+.rk-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.rk{display:grid;grid-template-columns:34px 1fr;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.rk.off{opacity:.55}
+.rk.sel{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--surface))}
+.rk-n{font:600 12px var(--f-mono);color:var(--ink2);padding-top:3px}
+.rk-top{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.rk-score{font:600 13px var(--f-mono)}
+.rk p{margin:6px 0 0;font-size:13px;color:var(--ink2);overflow-wrap:anywhere}
+.bar{position:relative;height:8px;border-radius:4px;background:var(--surface2);margin-top:6px;overflow:visible}
+.bar i{display:block;height:100%;border-radius:4px;background:var(--c)}
+.bar b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink2);opacity:.6}
+.badge{font:600 10.5px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:6px;border:1px solid var(--line);color:var(--ink2)}
+.badge.sel{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.sec-title{font:600 13px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);margin:0 0 8px}
+/* prompt */
+.tbar{display:flex;height:10px;border-radius:6px;overflow:hidden;background:var(--surface2);border:1px solid var(--line)}
+.tbar i{display:block;height:100%}
+.tleg{display:flex;flex-wrap:wrap;gap:4px 16px;font:500 12px var(--f-mono);color:var(--ink2);margin-top:6px}
+.pblock{border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.plabel{display:flex;align-items:center;gap:8px;font:600 11px var(--f-mono);letter-spacing:.12em;padding:8px 14px;background:var(--surface2);border-bottom:1px solid var(--line);color:var(--ink2)}
+.plabel::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--k,var(--ink2))}
+.pblock pre{white-space:pre-wrap;margin:0;padding:12px 14px;font:400 13px/1.6 var(--f-mono);overflow-wrap:anywhere}
+.cx{display:grid;grid-template-columns:auto 1fr;gap:10px;padding:12px 14px;border-top:1px solid var(--line)}
+.cx:first-of-type{border-top:0}
+.cx-n{font:600 12px var(--f-mono);color:var(--c)}
+.cx small{font:500 11px var(--f-mono);color:var(--ink2)}
+.cx p{margin:2px 0 0;font-size:13.5px;overflow-wrap:anywhere}
+.muted{color:var(--ink2)}
+/* llm */
+.llm-flow{display:flex;align-items:center;gap:10px}
+.node{padding:12px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface2);min-width:0;transition:border-color .2s}
+.node b{display:block;font-size:14px} .node small{color:var(--ink2);font-size:12px}
+.node.on{border-color:var(--accent)}
+.wire{position:relative;flex:1;height:2px;background:var(--line);min-width:20px}
+.wire i{position:absolute;top:-3px;left:0;width:8px;height:8px;border-radius:50%;background:var(--accent);opacity:0}
+.sending .wire i{opacity:1;animation:travel 1s linear infinite}
+@keyframes travel{from{left:0}to{left:calc(100% - 8px)}}
+.stream{min-height:120px;padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--surface2);font-size:16px;line-height:1.7}
+.caret{display:inline-block;width:8px;height:1.1em;background:var(--accent);vertical-align:-3px;margin-left:2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.cite{font:600 11px var(--f-mono);padding:1px 6px;border-radius:6px;background:var(--accent-soft);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);margin:0 2px;cursor:pointer;vertical-align:1px}
+/* output */
+.qbox{padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:var(--surface2)}
+.qbox p{margin:6px 0 0;font-size:17px}
+.answer{padding:18px 20px;border:1px solid var(--line);border-radius:12px}
+.answer .txt{font-size:17px;line-height:1.7;margin:8px 0 0}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.metric{padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface2)}
+.metric small{display:block;font:500 11px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}
+.metric b{font:600 20px var(--f-display)}
+.srcs{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.src{border:1px solid var(--line);border-radius:12px;padding:12px 14px;transition:border-color .2s,box-shadow .2s}
+.src.hl{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent)}
+.src p{margin:8px 0 0;font-size:13.5px;overflow-wrap:anywhere}
+.recap{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;font-size:13px;color:var(--ink2)}
+.recap .r{padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface2);color:var(--ink)}
+/* motion */
+.anim .chunk,.anim .rk{animation:rise .35s both;animation-delay:calc(min(var(--i,0),24)*30ms)}
+.anim .pt{animation:pop .4s both;transform-box:fill-box;transform-origin:center}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes pop{from{opacity:0;transform:scale(.2)}to{opacity:1;transform:scale(1)}}
+.busy .rail,.busy .stage button{pointer-events:none}
+@media (max-width:860px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .rail{position:static;flex-direction:row;overflow-x:auto;gap:8px;padding-bottom:6px}
+  .rail li::after{display:none}
+  .rail-item{min-width:150px}
+  .stage-head{padding:18px 18px 0} .stage-body{padding:18px 18px 4px} .stage-foot{padding:14px 18px}
+  .llm-flow{flex-wrap:wrap}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div>
+      <div class="eyebrow">Retrieval-augmented generation</div>
+      <h1>RAG Simulator</h1>
+      <p class="sub">Follow one question through all eight stages, from raw document to cited answer. Embeddings and the model are simulated in your browser, so nothing leaves this page.</p>
+    </div>
+    <div class="top-actions">
+      <button class="btn primary" id="runAll" type="button">Run everything</button>
+      <small>Plays all stages with the sample handbook</small>
+    </div>
+  </header>
+  <div class="layout">
+    <ol class="rail" id="rail" aria-label="Pipeline stages"></ol>
+    <main class="stage" id="stage"></main>
+  </div>
+</div>
+<script>
+/* LOGIC:START */
+const D=256;
+const SAMPLE=`Lumen Audio Customer Care Handbook
+
+Lumen Audio accepts returns within 30 days of delivery for all headphones and speakers. Items must be in their original packaging with all accessories included. Opened earbuds can be returned only if the ear tips are unused, for hygiene reasons.
+
+Once a return is received and inspected, refunds are issued to the original payment method within 5 to 7 business days. Shipping fees are not refunded unless the item arrived damaged or the wrong product was sent. Customers who paid with a gift card receive store credit instead.
+
+Every Lumen product carries a 2-year limited warranty that covers manufacturing defects. The warranty does not cover water damage, cracked housings, or wear from normal use such as worn ear cushions. To make a claim, customers must provide the order number and a short video showing the fault.
+
+Standard shipping takes 3 to 5 business days within the continental United States and is free on orders above $75. Express delivery costs $14.99 and arrives in 1 to 2 business days. International orders ship from our Rotterdam warehouse and take 7 to 12 business days. Customers are responsible for import duties.
+
+The Lumen Pulse headphones provide up to 40 hours of playback with noise cancellation off and 28 hours with it on. A 10-minute fast charge gives roughly 5 hours of listening. If the battery drains faster than expected, reset the headphones by holding the power and volume-down buttons for 12 seconds.
+
+To pair, hold the power button for 4 seconds until the light flashes blue. Lumen headphones can remember up to 8 devices and connect to two at once using multipoint. If pairing fails, forget the device in your phone settings and try again.
+
+Our support team is available Monday to Friday from 8:00 to 20:00 CET, and Saturday from 10:00 to 16:00 CET. Email response time is within 24 hours. Live chat is the fastest way to reach an agent, with an average wait of under 3 minutes. Phone support is offered only for warranty and order issues.
+
+Lumen does not offer price matching. Customers who bought a product and saw a price drop within 14 days can request a one-time price adjustment of up to $50 through live chat.
+
+The Lumen Renew program lets customers trade in old Lumen headphones for up to $60 toward a new pair. Devices must power on and have no cracked housing. Trade-in credit expires 90 days after it is issued.`;
+const SAMPLE_Q=['How long do I have to return my headphones?','How many hours does the Pulse battery last?','Do you offer price matching?','What does the warranty not cover?','Do you sell smart watches?'];
+const DEFAULT_SYS="You are a careful assistant. Answer the question using only the context below. Cite the passages you use as [1], [2]. If the context does not contain the answer, say you don't know.";
+const STOP=new Set(`a an the and or but if then else of to in on at by for with from as is are was were be been being it its this that these those i you we they he she them his her our your their my me do does did done can could should would will shall may might must not no nor so than too very just about into over under again once here there when where why how what which who whom whose also any all both each few more most other some such only own same up down out off while during before after above below between through because until against have has had having many much get got`.split(/\s+/));
+const SYN={reimburs:'refund',reimbursement:'refund',repay:'refund',deliver:'ship',delivery:'ship',courier:'ship',dispatch:'ship',guarante:'warranty',guarantee:'warranty',defective:'defect',faulty:'defect',broken:'defect',malfunction:'defect',pric:'cost',price:'cost',pricing:'cost',fee:'cost',email:'contact',phone:'contact',agent:'support',help:'support'};
+function stem(w){
+  if(/^\d/.test(w))return w;
+  let s=w;
+  if(s.length>4&&s.endsWith('ies'))s=s.slice(0,-3)+'y';
+  else if(s.length>5&&s.endsWith('ing')){s=s.slice(0,-3);if(/([^aeiou])\1$/.test(s))s=s.slice(0,-1);}
+  else if(s.length>4&&s.endsWith('ed')){s=s.slice(0,-2);if(/([^aeiou])\1$/.test(s))s=s.slice(0,-1);}
+  else if(s.length>3&&s.endsWith('s')&&!s.endsWith('ss'))s=s.slice(0,-1);
+  if(s.length>4&&s.endsWith('e'))s=s.slice(0,-1);
+  return s;
+}
+function canon(w){if(SYN[w])return SYN[w];const s=stem(w);return SYN[s]||s;}
+function tokenize(text){
+  const out=[];
+  (text.toLowerCase().match(/[a-z][a-z0-9'-]*|\d+(?:\.\d+)?/g)||[]).forEach(raw=>{
+    raw=raw.replace(/'s$/,'').replace(/['-]/g,'');
+    if(!raw||STOP.has(raw))return;
+    out.push(canon(raw));
+  });
+  return out;
+}
+function fnv(str){let h=0x811c9dc5;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0;}return h>>>0;}
+function features(text){
+  const t=tokenize(text),m=new Map();
+  t.forEach(x=>m.set(x,(m.get(x)||0)+1));
+  for(let i=0;i<t.length-1;i++){const k=t[i]+'_'+t[i+1];m.set(k,(m.get(k)||0)+1);}
+  return m;
+}
+function wgt(t,c,iv){return(1+Math.log(c))*iv*(t.indexOf('_')>-1?0.6:1);}
+function bucket(t){const h=fnv(t);return{idx:h%D,sign:((h>>>12)&1)?1:-1};}
+function buildIdf(chunks){
+  const df=new Map();
+  chunks.forEach(c=>features(c.text).forEach((_,t)=>df.set(t,(df.get(t)||0)+1)));
+  const N=chunks.length,idf=new Map();
+  df.forEach((d,t)=>idf.set(t,Math.log((N+1)/(d+1))+1));
+  return idf;
+}
+function normalize(v){let s=0;for(let i=0;i<v.length;i++)s+=v[i]*v[i];s=Math.sqrt(s);if(s>0)for(let i=0;i<v.length;i++)v[i]/=s;return s;}
+function embedText(text,idf){
+  const v=new Float32Array(D);
+  features(text).forEach((c,t)=>{
+    const iv=idf.get(t);if(iv===undefined)return;
+    const b=bucket(t);v[b.idx]+=b.sign*wgt(t,c,iv);
+  });
+  normalize(v);return v;
+}
+function dot(a,b){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;}
+function sentenceSpans(t){
+  const out=[],n=t.length;let start=0;
+  const push=(s,e)=>{while(s<e&&/\s/.test(t[s]))s++;while(e>s&&/\s/.test(t[e-1]))e--;if(e>s)out.push({s,e});};
+  for(let i=0;i<n;i++){
+    const c=t[i];
+    if(c==='\n'){push(start,i);start=i+1;}
+    else if(c==='.'||c==='!'||c==='?'){
+      let j=i;while(j+1<n&&'.!?'.includes(t[j+1]))j++;
+      if(j+1>=n||/\s/.test(t[j+1])){push(start,j+1);start=j+1;}
+      i=j;
+    }
+  }
+  push(start,n);return out;
+}
+function paragraphSpans(t){
+  const out=[],re=/\S[\s\S]*?(?=\n\s*\n|$)/g;let m;
+  while((m=re.exec(t))){
+    const s=m.index;let e=s+m[0].length;
+    while(e>s&&/\s/.test(t[e-1]))e--;
+    out.push({s,e});
+    if(re.lastIndex===m.index)re.lastIndex++;
+  }
+  return out;
+}
+function groupUnits(units,size,overlap){
+  const out=[];let i=0;
+  while(i<units.length){
+    const a=i;let b=i;
+    while(b+1<units.length&&(units[b+1].e-units[a].s)<=size)b++;
+    out.push({start:units[a].s,end:units[b].e});
+    if(b>=units.length-1)break;
+    let m=b+1,acc=0;
+    while(m-1>a&&acc+(units[m-1].e-units[m-1].s)<=overlap){m--;acc+=units[m].e-units[m].s;}
+    i=m;
+  }
+  return out;
+}
+function fixedChunks(doc,size,overlap){
+  const out=[],n=doc.length;let start=0;
+  while(start<n){
+    let end=Math.min(start+size,n);
+    if(end<n){const sp=doc.lastIndexOf(' ',end);if(sp>start+size*0.6)end=sp;}
+    let s=start,e=end;
+    while(s<e&&/\s/.test(doc[s]))s++;
+    while(e>s&&/\s/.test(doc[e-1]))e--;
+    if(e>s)out.push({start:s,end:e});
+    if(end>=n)break;
+    let next=end-overlap;
+    if(next<=start)next=end;
+    if(next>0&&next<n&&!/\s/.test(doc[next-1])){const sp=doc.indexOf(' ',next);if(sp!==-1&&sp<end)next=sp+1;}
+    start=next;
+  }
+  return out;
+}
+function makeChunks(doc,cfg){
+  const size=cfg.size,ov=cfg.overlap;let spans;
+  if(cfg.strategy==='fixed')spans=fixedChunks(doc,size,ov);
+  else{
+    let units;
+    if(cfg.strategy==='sentence')units=sentenceSpans(doc);
+    else{
+      units=[];
+      paragraphSpans(doc).forEach(p=>{
+        if(p.e-p.s>size)sentenceSpans(doc.slice(p.s,p.e)).forEach(s=>units.push({s:s.s+p.s,e:s.e+p.s}));
+        else units.push(p);
+      });
+    }
+    spans=groupUnits(units,size,ov);
+  }
+  const chunks=spans.map((sp,i)=>({id:i,start:sp.start,end:sp.end,text:doc.slice(sp.start,sp.end),overlap:0}));
+  for(let i=1;i<chunks.length;i++)chunks[i].overlap=Math.min(chunks[i].text.length,Math.max(0,chunks[i-1].end-chunks[i].start));
+  return chunks;
+}
+function pca2(vecs){
+  const n=vecs.length,mean=new Float32Array(D);
+  vecs.forEach(v=>{for(let j=0;j<D;j++)mean[j]+=v[j]/n;});
+  const X=vecs.map(v=>{const x=new Float32Array(D);for(let j=0;j<D;j++)x[j]=v[j]-mean[j];return x;});
+  const comp=prev=>{
+    let w=new Float32Array(D);
+    for(let j=0;j<D;j++)w[j]=Math.sin((j+1)*12.9898+(prev?7:0));
+    normalize(w);
+    for(let it=0;it<40;it++){
+      const y=new Float32Array(D);
+      for(const x of X){let t=0;for(let j=0;j<D;j++)t+=x[j]*w[j];for(let j=0;j<D;j++)y[j]+=x[j]*t;}
+      if(prev){let d=0;for(let j=0;j<D;j++)d+=y[j]*prev[j];for(let j=0;j<D;j++)y[j]-=d*prev[j];}
+      if(!normalize(y))break;
+      w=y;
+    }
+    return w;
+  };
+  const p1=comp(null),p2=comp(p1);
+  const proj=v=>{let a=0,b=0;for(let j=0;j<D;j++){const d=v[j]-mean[j];a+=d*p1[j];b+=d*p2[j];}return[a,b];};
+  return{proj,pts:vecs.map(proj)};
+}
+function pickAnswer(query,used,idf){
+  const none={text:"I couldn't find anything in the provided documents that answers this, so I'd rather not guess.",cites:[],picked:[],grounded:false};
+  const q=new Set(tokenize(query));
+  if(!used.length||!q.size)return none;
+  const cands=[];
+  used.forEach((r,ci)=>{
+    sentenceSpans(r.chunk.text).forEach(sp=>{
+      const sent=r.chunk.text.slice(sp.s,sp.e),toks=new Set(tokenize(sent));
+      let sc=0;q.forEach(t=>{if(toks.has(t))sc+=(idf.get(t)||1);});
+      cands.push({n:ci+1,s:sp.s,e:sp.e,sent,sc,rank:ci});
+    });
+  });
+  const seen=new Set();
+  const best=cands.filter(c=>c.sc>0).sort((a,b)=>b.sc-a.sc||a.rank-b.rank).filter(c=>{if(seen.has(c.sent))return false;seen.add(c.sent);return true;});
+  if(!best.length)return none;
+  const picked=best.filter(c=>c.sc>=best[0].sc*0.6).slice(0,3).sort((a,b)=>a.rank-b.rank||a.s-b.s);
+  return{text:picked.map(c=>c.sent+' ['+c.n+']').join(' '),cites:[...new Set(picked.map(c=>c.n))],picked,grounded:true};
+}
+/* LOGIC:END */
+const $=(s,r=document)=>r.querySelector(s);
+const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const REDUCE=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wait=ms=>sleep(REDUCE?0:ms);
+const pad=n=>String(n).padStart(2,'0');
+const tok=t=>Math.max(1,Math.ceil(String(t).length/4));
+const fmt=n=>Number(n).toLocaleString('en-US');
+const MAXDOC=12000;
+const CHECK='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+const STEPS=[null,
+ {title:'Add document',lead:'Paste text or load a file. This is the only knowledge the model will be allowed to draw on.',note:''},
+ {title:'Chunking',lead:'Long documents are cut into smaller passages so retrieval can return just the relevant piece. Overlap keeps an idea from being split at a boundary.',note:'In production, chunks are usually 200 to 1,000 tokens with 10 to 20 percent overlap.'},
+ {title:'Embedding',lead:'Each chunk becomes a vector, a fixed-length list of numbers. Chunks that talk about similar things end up with similar vectors.',note:'This demo hashes weighted words into 256 dimensions. Real embedding models learn 384 to 3,072 dimensions and also capture meaning, not just shared words.'},
+ {title:'Store in vector DB',lead:'The vectors are written to an index next to their source text and metadata, so a later query can find the nearest ones fast.',note:'Production systems use approximate indexes such as HNSW to search millions of vectors. This demo uses an exact flat search.'},
+ {title:'Ask a query',lead:'The question is embedded the same way as the chunks, then compared to every stored vector with cosine similarity. The closest chunks are retrieved.',note:'Top-k sets how many chunks to keep. The cutoff drops chunks that are not similar enough to help.'},
+ {title:'Compose prompt',lead:'The retrieved chunks, your question and an instruction are assembled into one prompt. This is the only thing the model actually sees.',note:'Models have a limited context window, so the number of chunks you retrieve is a budget decision.'},
+ {title:'Ask the LLM',lead:'The prompt is sent to the language model, which writes an answer from the supplied context.',note:'Here a small extractive routine stands in for the model. It picks the context sentences that best match the question. A real LLM would paraphrase and reason over the same prompt.'},
+ {title:'Output',lead:'The answer comes back with citations that point to the chunks it was built from, so every claim can be checked.',note:''}];
+
+const S={cur:1,doc:SAMPLE,isSample:true,cfg:{strategy:'sentence',size:320,overlap:60},chunks:[],vecs:[],idf:null,proj:null,stored:false,
+  query:SAMPLE_Q[0],topk:3,cutoff:0.05,qvec:null,ranked:[],used:[],searchMs:0,sys:DEFAULT_SYS,prompt:'',answer:null,
+  done:[false,false,false,false,false,false,false,false,false]};
+const VIEWS=[],BIND=[],actions=[];
+let running=false;
+
+function canGo(n){return n===1||S.done[n-1];}
+function invalidateFrom(n){
+  for(let k=n;k<=8;k++)S.done[k]=false;
+  if(n<=2)S.chunks=[];
+  if(n<=3){S.vecs=[];S.idf=null;}
+  if(n<=4){S.stored=false;S.proj=null;}
+  if(n<=5){S.ranked=[];S.used=[];S.qvec=null;}
+  if(n<=6)S.prompt='';
+  if(n<=7)S.answer=null;
+}
+function summary(n){
+  if(!S.done[n])return '';
+  switch(n){
+    case 1:return fmt(S.doc.trim().split(/\s+/).length)+' words';
+    case 2:return S.chunks.length+' chunks';
+    case 3:return D+' dimensions';
+    case 4:return S.vecs.length+' vectors';
+    case 5:return S.used.length?'top '+S.used.length+' selected':'nothing relevant';
+    case 6:return '~'+fmt(tok(S.prompt))+' tokens';
+    case 7:return S.answer&&S.answer.grounded?'answer ready':'no answer found';
+    case 8:return 'complete';
+  }
+  return '';
+}
+function setStatus(id,msg,kind){const el=$('#'+id);if(el){el.textContent=msg;el.className='status '+(kind||'');}}
+function setBusy(btn,on){if(btn)btn.disabled=on;}
+
+const railEl=$('#rail'),stageEl=$('#stage');
+function renderRail(){
+  railEl.innerHTML=STEPS.slice(1).map((st,i)=>{
+    const n=i+1,ok=canGo(n);
+    const state=n===S.cur?'active':(S.done[n]?'done':(ok?'ready':'locked'));
+    return `<li><button class="rail-item ${state}" data-n="${n}" type="button" ${ok?'':'disabled'} aria-current="${n===S.cur?'step':'false'}"><span class="dot">${state==='done'?CHECK:n}</span><span><b>${st.title}</b><small>${esc(summary(n))}</small></span></button></li>`;
+  }).join('');
+}
+function updateChrome(){
+  renderRail();
+  const nx=$('#next');if(nx)nx.disabled=!S.done[S.cur];
+}
+function renderStage(){
+  const st=STEPS[S.cur];
+  const foot=S.cur===8
+    ?`<button class="btn ghost btn" id="back" type="button">← Back</button><button class="btn primary" id="again" type="button">Ask another question</button>`
+    :`<button class="btn" id="back" type="button" ${S.cur===1?'disabled':''}>← Back</button><button class="btn primary" id="next" type="button" ${S.done[S.cur]?'':'disabled'}>Next: ${STEPS[S.cur+1].title} →</button>`;
+  stageEl.innerHTML=`<div class="stage-head"><div class="eyebrow">Step ${S.cur} of 8</div><h2>${st.title}</h2><p class="lead">${st.lead}</p>${st.note?`<p class="note">${st.note}</p>`:''}</div><div class="stage-body">${VIEWS[S.cur]()}</div><div class="stage-foot">${foot}</div>`;
+  BIND[S.cur]();
+  const act=$('#act'+S.cur);if(act)act.onclick=()=>actions[S.cur]();
+  $('#back').onclick=()=>go(S.cur-1,true);
+  const nx=$('#next');if(nx)nx.onclick=()=>go(S.cur+1,true);
+  const ag=$('#again');if(ag)ag.onclick=()=>go(5,true);
+}
+function render(){renderRail();renderStage();}
+function go(n,scroll){
+  if(n<1||n>8||!canGo(n))return;
+  S.cur=n;if(n===8)S.done[8]=true;
+  render();
+  if(scroll){const r=stageEl.getBoundingClientRect();if(r.top<0)window.scrollBy({top:r.top-12,behavior:REDUCE?'auto':'smooth'});}
+}
+railEl.addEventListener('click',e=>{const b=e.target.closest('.rail-item');if(b&&!b.disabled)go(+b.dataset.n,true);});
+
+/* ---------- Step 1: document ---------- */
+VIEWS[1]=()=>`
+<div class="doc-tools">
+  <button class="btn" id="loadSample" type="button">Load sample</button>
+  <label class="btn file" for="file">Upload .txt or .md<input id="file" type="file" accept=".txt,.md,.markdown,.csv,.json,text/plain" hidden></label>
+  <button class="btn" id="clearDoc" type="button">Clear</button>
+  <span class="tag" id="docTag" aria-live="polite">${S.isSample?'Sample: a fictional headphone maker\'s support handbook.':''}</span>
+</div>
+<textarea id="doc" class="doc-input" spellcheck="false" placeholder="Paste text here">${esc(S.doc)}</textarea>
+<div class="doc-stats" id="docStats"></div>
+<div class="actions"><button class="btn primary" id="act1" type="button">Add to pipeline</button><span class="status ${S.done[1]?'ok':''}" id="st1" aria-live="polite">${S.done[1]?'Document added · '+fmt(S.doc.trim().length)+' characters':''}</span></div>`;
+BIND[1]=()=>{
+  const ta=$('#doc');
+  const stats=()=>{const v=S.doc.trim();$('#docStats').textContent=fmt(v.length)+' characters · '+fmt(v?v.split(/\s+/).length:0)+' words · ~'+fmt(v?tok(v):0)+' tokens';};
+  const tag=m=>{const t=$('#docTag');if(t)t.textContent=m;};
+  stats();
+  ta.addEventListener('input',()=>{
+    let v=ta.value;
+    if(v.length>MAXDOC){v=v.slice(0,MAXDOC);ta.value=v;tag('Trimmed to '+fmt(MAXDOC)+' characters for this demo.');}
+    S.doc=v;S.isSample=(v===SAMPLE);
+    if(S.done[1]||S.chunks.length){invalidateFrom(1);updateChrome();setStatus('st1','','');}
+    stats();
+  });
+  $('#loadSample').onclick=()=>{ta.value=SAMPLE;ta.dispatchEvent(new Event('input'));tag('Sample loaded: a fictional headphone maker\'s support handbook.');};
+  $('#clearDoc').onclick=()=>{ta.value='';ta.dispatchEvent(new Event('input'));tag('');ta.focus();};
+  $('#file').addEventListener('change',e=>{
+    const f=e.target.files[0];if(!f)return;
+    if(f.size>1000000){tag('That file is over 1 MB. Try a smaller one.');return;}
+    const r=new FileReader();
+    r.onload=()=>{ta.value=String(r.result);ta.dispatchEvent(new Event('input'));tag('Loaded '+f.name);};
+    r.readAsText(f);
+  });
+};
+actions[1]=async()=>{
+  const v=S.doc.trim();
+  if(v.length<40){setStatus('st1','Add at least a couple of sentences so there is something to split.','err');return;}
+  S.done[1]=true;setStatus('st1','Document added · '+fmt(v.length)+' characters','ok');updateChrome();
+};
+
+/* ---------- Step 2: chunking ---------- */
+function emptyChunks(){return `<div class="empty"><i style="width:90%"></i><i style="width:72%"></i><i style="width:84%"></i><i style="width:55%"></i><div>Chunks will appear here.</div></div>`;}
+function chunkCard(ch,i){
+  const t=ch.text,ov=ch.overlap;
+  const body=ov>0?`<mark class="ov" title="Repeated from the previous chunk">${esc(t.slice(0,ov))}</mark>${esc(t.slice(ov))}`:esc(t);
+  return `<article class="chunk" style="--c:var(--c${(i%6)+1});--i:${i}"><header><span class="cid">C${pad(i+1)}</span><span class="meta">${t.length} chars · ~${tok(t)} tokens</span></header><p>${body}</p></article>`;
+}
+function chunkOutHtml(anim){
+  const len=S.doc.length||1,shown=S.chunks.slice(0,60);
+  const map=S.chunks.map((c,i)=>`<div class="mseg" style="--c:var(--c${(i%6)+1});left:${(c.start/len*100).toFixed(2)}%;width:${((c.end-c.start)/len*100).toFixed(2)}%;top:${i%2?32:5}px" title="C${pad(i+1)}"></div>`).join('');
+  const ovN=S.chunks.filter(c=>c.overlap>0).length;
+  return `<div class="${anim?'anim':''}"><div class="map" role="img" aria-label="Position of each chunk in the document">${map}</div>
+  <p class="mcap">Document map, ${fmt(S.doc.length)} characters. Chunks alternate between two rows so overlaps are visible${ovN?' ('+ovN+' chunks share text with the one before)':''}.</p>
+  <div class="chunks" style="margin-top:14px">${shown.map(chunkCard).join('')}</div>${S.chunks.length>60?`<p class="more">Showing the first 60 of ${S.chunks.length} chunks. All of them continue through the pipeline.</p>`:''}</div>`;
+}
+VIEWS[2]=()=>{const c=S.cfg;return `
+<div class="controls">
+  <div class="ctl"><span class="ctl-l">Strategy</span><div class="seg" id="seg">${[['sentence','Sentence-aware'],['fixed','Fixed size'],['paragraph','Paragraph']].map(([k,l])=>`<button class="${c.strategy===k?'on':''}" data-k="${k}" type="button">${l}</button>`).join('')}</div></div>
+  <div class="ctl"><label for="size">Chunk size <output id="sizeO">${c.size}</output> chars</label><input id="size" type="range" min="100" max="800" step="20" value="${c.size}"></div>
+  <div class="ctl"><label for="ovl">Overlap <output id="ovlO">${c.overlap}</output> chars</label><input id="ovl" type="range" min="0" max="200" step="10" value="${c.overlap}"></div>
+</div>
+<div class="actions"><button class="btn primary" id="act2" type="button">${S.chunks.length?'Re-run chunking':'Split into chunks'}</button><span class="status ${S.done[2]?'ok':''}" id="st2" aria-live="polite">${S.done[2]?S.chunks.length+' chunks created':''}</span></div>
+<div id="chunkOut">${S.chunks.length?chunkOutHtml(false):emptyChunks()}</div>`;};
+BIND[2]=()=>{
+  let timer;
+  const rerun=()=>{if(S.chunks.length){clearTimeout(timer);timer=setTimeout(()=>actions[2](false),90);}};
+  $('#seg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;S.cfg.strategy=b.dataset.k;$$('#seg button').forEach(x=>x.classList.toggle('on',x===b));rerun();});
+  $('#size').addEventListener('input',e=>{S.cfg.size=+e.target.value;$('#sizeO').textContent=e.target.value;rerun();});
+  $('#ovl').addEventListener('input',e=>{S.cfg.overlap=+e.target.value;$('#ovlO').textContent=e.target.value;rerun();});
+};
+actions[2]=async(anim)=>{
+  if(!S.done[1])return;
+  S.chunks=makeChunks(S.doc,S.cfg);
+  invalidateFrom(3);S.done[2]=S.chunks.length>0;
+  const out=$('#chunkOut');if(out)out.innerHTML=S.chunks.length?chunkOutHtml(anim!==false):emptyChunks();
+  const b=$('#act2');if(b)b.textContent='Re-run chunking';
+  setStatus('st2',S.chunks.length?S.chunks.length+' chunks created':'Nothing to split.',S.chunks.length?'ok':'err');
+  updateChrome();
+};
+
+/* ---------- Step 3: embedding ---------- */
+function heatHtml(v){
+  if(!v)return '<div class="heat">'+'<i></i>'.repeat(D)+'</div>';
+  let m=0;for(const x of v)m=Math.max(m,Math.abs(x));m=m||1;
+  let h='<div class="heat">';
+  for(const x of v){
+    const a=Math.round(Math.min(1,Math.abs(x)/m)*100);
+    h+=a<4?'<i></i>':`<i style="background:color-mix(in srgb,var(${x>0?'--accent':'--info'}) ${a}%,transparent)"></i>`;
+  }
+  return h+'</div>';
+}
+function embRow(ch,i){
+  const v=S.vecs[i];
+  return `<div class="emb-row ${v?'done':''}" data-i="${i}" style="--c:var(--c${(i%6)+1})"><button class="emb-head" type="button" aria-expanded="false"><span class="cid">C${pad(i+1)}</span><span class="emb-text">${esc(ch.text.slice(0,110))}</span><span class="emb-state">${v?'embedded':'waiting'}</span></button><div class="hm">${heatHtml(v||null)}</div><div class="emb-detail" hidden></div></div>`;
+}
+function termChips(text){
+  const out=[];
+  features(text).forEach((c,t)=>{const iv=S.idf.get(t);if(iv===undefined)return;const b=bucket(t);out.push({t,w:wgt(t,c,iv),b});});
+  out.sort((a,b)=>b.w-a.w);
+  return out.slice(0,12).map(x=>`<span class="tk">${esc(x.t.replace('_',' '))} <em>→ dim ${x.b.idx} ${x.b.sign>0?'+':'−'}</em></span>`).join('');
+}
+VIEWS[3]=()=>`
+<div class="actions"><button class="btn primary" id="act3" type="button">${S.vecs.length?'Re-generate embeddings':'Generate embeddings'}</button><span class="status ${S.done[3]?'ok':''}" id="st3" aria-live="polite">${S.done[3]?S.chunks.length+' chunks → '+D+'-dimension vectors':''}</span><span class="model-tag">model: hash-tfidf-${D} (simulated)</span></div>
+<div class="legend"><span>negative</span><i></i><span>positive</span></div>
+<div class="emb-list" id="embList">${S.chunks.slice(0,60).map(embRow).join('')}</div>
+${S.chunks.length>60?`<p class="more">Showing the first 60 of ${S.chunks.length} chunks.</p>`:''}
+<p class="note" style="margin:0">Each strip is one chunk's ${D} numbers. Select a row to see which words wrote to which dimensions.</p>`;
+BIND[3]=()=>{
+  $('#embList').addEventListener('click',e=>{
+    const h=e.target.closest('.emb-head');if(!h)return;
+    const row=h.parentElement,i=+row.dataset.i,d=$('.emb-detail',row);
+    if(!S.vecs[i])return;
+    const open=d.hidden;
+    d.hidden=!open;h.setAttribute('aria-expanded',String(open));
+    if(open)d.innerHTML='<span>Heaviest terms and the dimension each one writes to (rare words weigh more):</span> '+termChips(S.chunks[i].text);
+  });
+};
+actions[3]=async()=>{
+  if(!S.done[2]||!S.chunks.length)return;
+  invalidateFrom(4);S.done[3]=false;S.vecs=[];updateChrome();
+  const btn=$('#act3');setBusy(btn,true);setStatus('st3','Embedding…','');
+  S.idf=buildIdf(S.chunks);
+  const n=S.chunks.length,delay=Math.min(140,2400/n);
+  for(let i=0;i<n;i++){
+    S.vecs.push(embedText(S.chunks[i].text,S.idf));
+    const row=$(`.emb-row[data-i="${i}"]`);
+    if(row){row.classList.add('done');$('.hm',row).innerHTML=heatHtml(S.vecs[i]);$('.emb-state',row).textContent='embedded';}
+    setStatus('st3','Embedding '+(i+1)+' of '+n+'…','');
+    await wait(delay);
+  }
+  S.done[3]=true;
+  setStatus('st3',n+' chunks → '+D+'-dimension vectors','ok');
+  setBusy($('#act3'),false);const b=$('#act3');if(b)b.textContent='Re-generate embeddings';
+  updateChrome();
+};
+/* ---------- Step 4: vector store ---------- */
+function spaceSvg(showQuery,anim){
+  const W=640,H=340,P=36,pts=S.proj.pts;
+  let q=null;
+  if(showQuery&&S.qvec&&S.qvec.some(x=>x!==0))q=S.proj.proj(S.qvec);
+  const all=q?pts.concat([q]):pts;
+  let minx=Infinity,maxx=-Infinity,miny=Infinity,maxy=-Infinity;
+  all.forEach(([x,y])=>{minx=Math.min(minx,x);maxx=Math.max(maxx,x);miny=Math.min(miny,y);maxy=Math.max(maxy,y);});
+  if(maxx-minx<1e-6){minx-=1;maxx+=1;}
+  if(maxy-miny<1e-6){miny-=1;maxy+=1;}
+  const sx=x=>P+(x-minx)/(maxx-minx)*(W-2*P),sy=y=>H-P-(y-miny)/(maxy-miny)*(H-2*P);
+  let g='';
+  for(let i=0;i<=5;i++){const x=P+i*(W-2*P)/5;g+=`<line x1="${x}" y1="${P-14}" x2="${x}" y2="${H-P+14}"/>`;}
+  for(let i=0;i<=4;i++){const y=P-14+i*(H-2*P+28)/4;g+=`<line x1="${P-14}" y1="${y}" x2="${W-P+14}" y2="${y}"/>`;}
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Two-dimensional map of the stored vectors${q?' with the query and its nearest chunks':''}"><g class="grid">${g}</g>`;
+  if(q){
+    S.used.forEach(r=>{
+      const p=pts[r.idx];
+      s+=`<line x1="${sx(q[0])}" y1="${sy(q[1])}" x2="${sx(p[0])}" y2="${sy(p[1])}" style="stroke:var(--accent);stroke-width:${(1+Math.max(0,r.score)*5).toFixed(1)}" stroke-dasharray="6 4" opacity=".75"/>`;
+    });
+  }
+  const usedIdx=new Set(q?S.used.map(r=>r.idx):[]);
+  const lab=pts.length<=30;
+  pts.slice(0,150).forEach((p,i)=>{
+    const x=sx(p[0]),y=sy(p[1]);
+    s+=`<g class="pt" style="animation-delay:${Math.min(i,30)*40}ms">${usedIdx.has(i)?`<circle cx="${x}" cy="${y}" r="12" fill="none" style="stroke:var(--accent);stroke-width:2"/>`:''}<circle cx="${x}" cy="${y}" r="7" style="fill:var(--c${(i%6)+1});stroke:var(--surface2);stroke-width:2"/>${lab?`<text class="lbl" x="${x+10}" y="${y-9}">C${pad(i+1)}</text>`:''}</g>`;
+  });
+  if(q){
+    const x=sx(q[0]),y=sy(q[1]);
+    s+=`<path d="M${x} ${y-11}L${x+11} ${y}L${x} ${y+11}L${x-11} ${y}Z" style="fill:var(--accent);stroke:var(--surface2);stroke-width:2"/><text class="qlbl" x="${x+14}" y="${y+4}">Query</text>`;
+  }
+  s+=`<text class="lbl" x="${W-P}" y="${H-6}" text-anchor="end">PC1 →</text><text class="lbl" x="6" y="${P-18}">PC2 ↑</text></svg>`;
+  return `<div class="${anim?'anim':''}">${s}</div>`;
+}
+function storeMetaHtml(){
+  if(!S.stored)return '<span class="muted">Nothing stored yet.</span>';
+  const bytes=S.vecs.length*D*4;
+  return `<div class="kv"><span>Vectors <b>${S.vecs.length}</b></span><span>Dimensions <b>${D}</b></span><span>Size <b>${bytes>=1024?(bytes/1024).toFixed(1)+' KB':bytes+' B'}</b></span><span>Index <b>flat · cosine</b></span></div>`;
+}
+function vrow(i){
+  const c=S.chunks[i];
+  return `<tr><td class="mono">vec_${String(i+1).padStart(3,'0')}</td><td><span class="cid" style="--c:var(--c${(i%6)+1})">C${pad(i+1)}</span> ${esc(c.text.slice(0,70))}${c.text.length>70?'…':''}</td><td class="mono">${D} × float32<br>‖v‖ = 1.000</td><td class="mono">chars ${c.start}–${c.end}</td></tr>`;
+}
+VIEWS[4]=()=>`
+<div class="actions"><button class="btn primary" id="act4" type="button">${S.stored?'Re-write to store':'Write to vector store'}</button><span class="status ${S.done[4]?'ok':''}" id="st4" aria-live="polite">${S.done[4]?S.vecs.length+' vectors stored':''}</span></div>
+<div id="storeMeta">${storeMetaHtml()}</div>
+<div class="table-wrap"><table class="vtable"><thead><tr><th>ID</th><th>Chunk text</th><th>Vector</th><th>Metadata</th></tr></thead><tbody id="vbody">${S.stored?S.chunks.slice(0,80).map((_,i)=>vrow(i)).join(''):'<tr><td colspan="4" class="muted" style="padding:22px;text-align:center">Records will be written here.</td></tr>'}</tbody></table></div>
+<div class="space"><div class="space-head"><b>Vector space</b><span>${D} dimensions flattened to 2 (PCA). Distances are approximate.</span></div><div id="space">${S.stored?spaceSvg(false,false):'<div class="ph">The map appears once vectors are stored.</div>'}</div></div>`;
+BIND[4]=()=>{};
+actions[4]=async()=>{
+  if(!S.done[3])return;
+  invalidateFrom(5);S.stored=false;S.done[4]=false;updateChrome();
+  const btn=$('#act4');setBusy(btn,true);setStatus('st4','Writing…','');
+  S.proj=pca2(S.vecs);
+  const body=$('#vbody');if(body)body.innerHTML='';
+  const sp=$('#space');if(sp)sp.innerHTML=spaceSvg(false,true);
+  const n=S.chunks.length,delay=Math.min(90,1600/n);
+  for(let i=0;i<Math.min(n,80);i++){
+    const b=$('#vbody');if(!b)break;
+    b.insertAdjacentHTML('beforeend',vrow(i));
+    await wait(delay);
+  }
+  S.stored=true;S.done[4]=true;
+  const m=$('#storeMeta');if(m)m.innerHTML=storeMetaHtml();
+  const b=$('#act4');if(b){b.textContent='Re-write to store';b.disabled=false;}
+  setStatus('st4',n+' vectors stored','ok');updateChrome();
+};
+
+/* ---------- Step 5: query ---------- */
+function suggestions(){
+  if(S.isSample)return SAMPLE_Q;
+  const cnt=new Map();
+  (S.doc.toLowerCase().match(/[a-z]{5,}/g)||[]).forEach(w=>{if(!STOP.has(w))cnt.set(w,(cnt.get(w)||0)+1);});
+  return [...cnt.entries()].sort((a,b)=>b[1]-a[1]).slice(0,4).map(([w])=>'What does the document say about '+w+'?');
+}
+function selectUsed(){S.used=S.ranked.slice(0,S.topk).filter(r=>r.score>0&&r.score>=S.cutoff);}
+function resultsHtml(anim){
+  const usedIdx=new Set(S.used.map(r=>r.idx));
+  const rows=S.ranked.slice(0,8).map((r,k)=>{
+    const sel=usedIdx.has(r.idx);
+    const why=sel?'Selected':(r.score<=0||r.score<S.cutoff?'Below cutoff':'Outside top-'+S.topk);
+    return `<li class="rk ${sel?'sel':'off'}" style="--c:var(--c${(r.idx%6)+1});--i:${k}"><span class="rk-n">#${r.rank}</span><div><div class="rk-top"><span class="cid">C${pad(r.idx+1)}</span><span class="rk-score">${r.score.toFixed(3)}</span><span class="badge ${sel?'sel':''}">${why}</span></div><div class="bar" title="Similarity ${r.score.toFixed(3)}; tick marks the cutoff"><i style="width:${Math.min(100,Math.max(0,r.score)*100).toFixed(1)}%"></i><b style="left:${(S.cutoff*100).toFixed(0)}%"></b></div><p>${esc(r.chunk.text.slice(0,140))}${r.chunk.text.length>140?'…':''}</p></div></li>`;
+  }).join('');
+  const zero=!S.qvec.some(x=>x!==0);
+  return `<div class="${anim?'anim':''}" style="display:flex;flex-direction:column;gap:18px">
+  <div><p class="sec-title">Query vector</p>${heatHtml(S.qvec)}${zero?'<p class="note" style="margin:8px 0 0">None of the question\'s words appear in the document, so its vector is empty and nothing can match.</p>':''}</div>
+  <div><p class="sec-title">Closest chunks · searched ${S.chunks.length} vectors in ${S.searchMs<0.1?'<0.1':S.searchMs.toFixed(1)} ms</p><ol class="rk-list">${rows}</ol></div>
+  <div class="space"><div class="space-head"><b>Where the query lands</b><span>Lines connect it to the selected chunks</span></div>${spaceSvg(true,anim)}</div></div>`;
+}
+VIEWS[5]=()=>`
+<div class="ctl"><label class="ctl-l" for="query">Your question</label>
+<div class="q-row"><input id="query" type="text" value="${esc(S.query)}" placeholder="Ask something the document can answer" autocomplete="off"><button class="btn primary" id="act5" type="button">Embed query and search</button></div></div>
+<div class="chips" id="qchips">${suggestions().map((q,i,a)=>`<button class="chip" type="button" data-q="${esc(q)}" ${S.isSample&&i===a.length-1?'title="Not in the handbook, so a grounded answer should say it does not know."':''}>${esc(q)}</button>`).join('')}</div>
+<div class="controls">
+  <div class="ctl"><label for="topk">Top-k <output id="topkO">${S.topk}</output> chunks</label><input id="topk" type="range" min="1" max="6" value="${S.topk}"></div>
+  <div class="ctl"><label for="cutoff">Similarity cutoff <output id="cutO">${S.cutoff.toFixed(2)}</output></label><input id="cutoff" type="range" min="0" max="0.5" step="0.01" value="${S.cutoff}"></div>
+</div>
+<span class="status ${S.done[5]?'ok':''}" id="st5" aria-live="polite">${S.done[5]?(S.used.length?S.used.length+' chunks selected':'No chunk passed the cutoff'):''}</span>
+<div id="results">${S.ranked.length?resultsHtml(false):''}</div>`;
+BIND[5]=()=>{
+  $('#query').addEventListener('keydown',e=>{if(e.key==='Enter')actions[5]();});
+  $('#query').addEventListener('input',e=>{S.query=e.target.value;});
+  $('#qchips').addEventListener('click',e=>{const b=e.target.closest('.chip');if(!b)return;$('#query').value=b.dataset.q;actions[5]();});
+  const live=()=>{
+    if(!S.ranked.length)return;
+    selectUsed();invalidateFrom(6);S.done[5]=true;
+    $('#results').innerHTML=resultsHtml(false);
+    setStatus('st5',S.used.length?S.used.length+' chunks selected':'No chunk passed the cutoff','ok');updateChrome();
+  };
+  $('#topk').addEventListener('input',e=>{S.topk=+e.target.value;$('#topkO').textContent=e.target.value;live();});
+  $('#cutoff').addEventListener('input',e=>{S.cutoff=+e.target.value;$('#cutO').textContent=(+e.target.value).toFixed(2);live();});
+};
+actions[5]=async()=>{
+  if(!S.done[4])return;
+  const q=($('#query').value||'').trim();
+  if(!q){setStatus('st5','Type a question first.','err');return;}
+  S.query=q;invalidateFrom(6);
+  const t0=performance.now();
+  S.qvec=embedText(q,S.idf);
+  S.ranked=S.chunks.map((chunk,idx)=>({chunk,idx,score:dot(S.vecs[idx],S.qvec)})).sort((a,b)=>b.score-a.score).map((r,k)=>({...r,rank:k+1}));
+  S.searchMs=performance.now()-t0;
+  selectUsed();S.done[5]=true;
+  $('#results').innerHTML=resultsHtml(true);
+  setStatus('st5',S.used.length?S.used.length+' chunks selected':'No chunk passed the cutoff','ok');
+  updateChrome();
+};
+
+/* ---------- Step 6: prompt ---------- */
+function ctxText(){
+  return S.used.length?S.used.map((r,i)=>`[${i+1}] (chunk C${pad(r.idx+1)}, similarity ${r.score.toFixed(2)})\n${r.chunk.text}`).join('\n\n'):'(no chunks passed the similarity cutoff)';
+}
+function buildPrompt(){return `SYSTEM\n${S.sys}\n\nCONTEXT\n${ctxText()}\n\nQUESTION\n${S.query}\n\nANSWER\n`;}
+function promptHtml(){
+  const a=tok(S.sys),b=tok(ctxText()),c=tok(S.query),total=a+b+c+4,BUDGET=4096;
+  const pc=x=>(x/BUDGET*100).toFixed(2)+'%';
+  const ctx=S.used.length?S.used.map((r,i)=>`<div class="cx" style="--c:var(--c${(r.idx%6)+1})"><span class="cx-n">[${i+1}]</span><div><small>C${pad(r.idx+1)} · similarity ${r.score.toFixed(2)}</small><p>${esc(r.chunk.text)}</p></div></div>`).join(''):'<pre class="muted">(no chunks passed the similarity cutoff)</pre>';
+  return `<div style="display:flex;flex-direction:column;gap:14px">
+  <div><div class="tbar" role="img" aria-label="Prompt size against a 4,096 token budget"><i style="width:${pc(a)};background:var(--info)"></i><i style="width:${pc(b)};background:var(--good)"></i><i style="width:${pc(c+4)};background:var(--accent)"></i></div>
+  <div class="tleg"><span>~${fmt(total)} of ${fmt(BUDGET)} tokens</span><span style="color:var(--info)">system ${a}</span><span style="color:var(--good)">context ${b}</span><span style="color:var(--accent)">question ${c}</span></div></div>
+  <div class="pblock" style="--k:var(--info)"><div class="plabel">SYSTEM</div><pre>${esc(S.sys)}</pre></div>
+  <div class="pblock" style="--k:var(--good)"><div class="plabel">CONTEXT · ${S.used.length} CHUNK${S.used.length===1?'':'S'}</div>${ctx}</div>
+  <div class="pblock" style="--k:var(--accent)"><div class="plabel">QUESTION</div><pre>${esc(S.query)}</pre></div>
+  <div class="pblock"><div class="plabel">ANSWER</div><pre class="muted">The model continues from here.</pre></div></div>`;
+}
+VIEWS[6]=()=>`
+<div class="ctl"><label class="ctl-l" for="sys">System instruction (editable)</label><textarea id="sys" class="sys-input" rows="3">${esc(S.sys)}</textarea></div>
+<div class="actions"><button class="btn primary" id="act6" type="button">${S.prompt?'Re-assemble prompt':'Assemble prompt'}</button><button class="btn" id="copyPrompt" type="button" ${S.prompt?'':'hidden'}>Copy prompt</button><span class="status ${S.done[6]?'ok':''}" id="st6" aria-live="polite">${S.done[6]?'Prompt ready · ~'+fmt(tok(S.prompt))+' tokens':''}</span></div>
+<div id="promptOut">${S.prompt?promptHtml():'<div class="empty"><i style="width:60%"></i><i style="width:80%"></i><i style="width:45%"></i><div>The assembled prompt will appear here.</div></div>'}</div>`;
+BIND[6]=()=>{
+  $('#copyPrompt').onclick=()=>{
+    const ok=()=>setStatus('st6','Prompt copied','ok');
+    const fail=()=>setStatus('st6','Copy is blocked here. Select the prompt text and copy it manually.','err');
+    try{navigator.clipboard.writeText(S.prompt).then(ok,fail);}catch(e){fail();}
+  };
+};
+actions[6]=async()=>{
+  if(!S.done[5])return;
+  const ta=$('#sys');if(ta)S.sys=ta.value.trim()||DEFAULT_SYS;
+  invalidateFrom(7);
+  S.prompt=buildPrompt();S.done[6]=true;
+  $('#promptOut').innerHTML=promptHtml();
+  const c=$('#copyPrompt');if(c)c.hidden=false;
+  const b=$('#act6');if(b)b.textContent='Re-assemble prompt';
+  setStatus('st6','Prompt ready · ~'+fmt(tok(S.prompt))+' tokens','ok');updateChrome();
+};
+/* ---------- Step 7: LLM ---------- */
+function answerRich(t){return esc(t).replace(/\[(\d+)\]/g,'<button class="cite" data-n="$1" type="button" aria-label="Source $1">$1</button>');}
+VIEWS[7]=()=>`
+<div class="llm-flow" id="flow">
+  <div class="node" id="n1"><b>Prompt</b><small>~${fmt(tok(S.prompt))} tokens</small></div><div class="wire"><i></i></div>
+  <div class="node" id="n2"><b>LLM</b><small>sim-llm-1 · temp 0.2</small></div><div class="wire"><i></i></div>
+  <div class="node" id="n3"><b>Answer</b><small>streams back</small></div>
+</div>
+<div class="actions"><button class="btn primary" id="act7" type="button">${S.answer?'Send again':'Send to LLM'}</button><span class="status ${S.done[7]?'ok':''}" id="st7" aria-live="polite">${S.done[7]?'Reply received':''}</span></div>
+<div class="stream" id="stream" aria-live="polite">${S.answer?answerRich(S.answer.text):'<span class="muted">The model\'s reply streams in here.</span>'}</div>`;
+BIND[7]=()=>{};
+actions[7]=async()=>{
+  if(!S.done[6])return;
+  const btn=$('#act7');setBusy(btn,true);
+  S.done[7]=false;S.done[8]=false;S.answer=null;updateChrome();
+  const flow=$('#flow'),out=$('#stream');
+  if(flow){flow.classList.add('sending');$('#n1').classList.add('on');$('#n2').classList.add('on');}
+  if(out)out.innerHTML='<span class="muted">Waiting for the model…</span>';
+  setStatus('st7','Request sent…','');
+  const t0=performance.now();
+  await wait(900);
+  const ans=pickAnswer(S.query,S.used,S.idf);
+  const words=ans.text.split(' ');let acc='';
+  for(const w of words){
+    acc+=(acc?' ':'')+w;
+    const o=$('#stream');if(o)o.innerHTML=answerRich(acc)+'<span class="caret"></span>';
+    await wait(28);
+  }
+  ans.ms=performance.now()-t0;
+  S.answer=ans;S.done[7]=true;
+  const o=$('#stream');if(o)o.innerHTML=answerRich(ans.text);
+  const f=$('#flow');if(f){f.classList.remove('sending');$('#n3').classList.add('on');}
+  const b=$('#act7');if(b){b.disabled=false;b.textContent='Send again';}
+  setStatus('st7',ans.grounded?'Reply received':'Reply received · no supporting context','ok');
+  updateChrome();
+};
+
+/* ---------- Step 8: output ---------- */
+function hiText(text,spans){
+  const sp=[...spans].sort((a,b)=>a.s-b.s);let out='',p=0;
+  sp.forEach(x=>{if(x.s<p)return;out+=esc(text.slice(p,x.s))+`<mark class="cited">${esc(text.slice(x.s,x.e))}</mark>`;p=x.e;});
+  return out+esc(text.slice(p));
+}
+VIEWS[8]=()=>{
+  const a=S.answer;
+  if(!a)return '<div class="empty">Run the previous steps to see the answer.</div>';
+  const srcs=S.used.map((r,i)=>{
+    const spans=a.picked.filter(p=>p.n===i+1);
+    return `<article class="src" data-n="${i+1}" style="--c:var(--c${(r.idx%6)+1})"><div class="rk-top"><span class="cx-n" style="color:var(--c)">[${i+1}]</span><span class="cid">C${pad(r.idx+1)}</span><span class="rk-score">${r.score.toFixed(2)}</span>${spans.length?'<span class="badge sel">Cited</span>':'<span class="badge">Not cited</span>'}</div><p>${hiText(r.chunk.text,spans)}</p></article>`;
+  }).join('');
+  const recap=[fmt(S.doc.length)+' characters',S.chunks.length+' chunks',S.chunks.length+' × '+D+'-d vectors','top '+S.used.length+' retrieved','~'+fmt(tok(S.prompt))+' token prompt',a.text.split(/\s+/).length+' word answer'];
+  return `
+<div class="qbox"><span class="ctl-l">You asked</span><p>${esc(S.query)}</p></div>
+<div class="answer"><div class="rk-top"><span class="ctl-l">Answer</span><span class="badge ${a.grounded?'sel':''}">${a.grounded?'Grounded in '+a.cites.length+' source'+(a.cites.length===1?'':'s'):'No supporting context'}</span></div><p class="txt" id="ansTxt">${answerRich(a.text)}</p></div>
+<div class="metrics">
+  <div class="metric"><small>Search</small><b>${S.searchMs<0.1?'<0.1':S.searchMs.toFixed(1)} ms</b></div>
+  <div class="metric"><small>Prompt</small><b>~${fmt(tok(S.prompt))} tok</b></div>
+  <div class="metric"><small>Answer</small><b>~${fmt(tok(a.text))} tok</b></div>
+  <div class="metric"><small>Chunks used</small><b>${S.used.length} of ${S.chunks.length}</b></div>
+</div>
+${S.used.length?`<div><p class="sec-title">Sources behind the answer</p><div class="srcs" id="srcs">${srcs}</div></div>`:''}
+<div><p class="sec-title">What happened</p><div class="recap">${recap.map((r,i)=>(i?'<span aria-hidden="true">→</span>':'')+`<span class="r">${r}</span>`).join('')}</div></div>
+<div class="actions"><button class="btn" id="startOver" type="button">Start over</button></div>`;
+};
+BIND[8]=()=>{
+  const hl=(n,on)=>{const el=$(`.src[data-n="${n}"]`);if(el)el.classList.toggle('hl',on);};
+  const t=$('#ansTxt');
+  if(t){
+    t.addEventListener('mouseover',e=>{const c=e.target.closest('.cite');if(c)hl(c.dataset.n,true);});
+    t.addEventListener('mouseout',e=>{const c=e.target.closest('.cite');if(c)hl(c.dataset.n,false);});
+    t.addEventListener('focusin',e=>{const c=e.target.closest('.cite');if(c)hl(c.dataset.n,true);});
+    t.addEventListener('focusout',e=>{const c=e.target.closest('.cite');if(c)hl(c.dataset.n,false);});
+    t.addEventListener('click',e=>{const c=e.target.closest('.cite');if(!c)return;const el=$(`.src[data-n="${c.dataset.n}"]`);if(el)el.scrollIntoView({block:'center',behavior:REDUCE?'auto':'smooth'});});
+  }
+  const so=$('#startOver');if(so)so.onclick=()=>{invalidateFrom(1);S.cur=1;render();window.scrollTo({top:0,behavior:REDUCE?'auto':'smooth'});};
+};
+
+/* ---------- Run everything ---------- */
+async function runAll(){
+  if(running)return;
+  running=true;document.body.classList.add('busy');
+  const btn=$('#runAll');btn.disabled=true;btn.textContent='Running…';
+  try{
+    if(!S.doc.trim()){S.doc=SAMPLE;S.isSample=true;}
+    if(!S.query.trim())S.query=SAMPLE_Q[0];
+    invalidateFrom(1);
+    for(let n=1;n<=7;n++){
+      S.cur=n;render();
+      await wait(350);
+      await actions[n](true);
+      await wait(500);
+    }
+    go(8,true);
+  }finally{
+    running=false;document.body.classList.remove('busy');
+    btn.disabled=false;btn.textContent='Run everything';
+  }
+}
+$('#runAll').onclick=runAll;
+render();
+</script>
+</body>
+</html>
